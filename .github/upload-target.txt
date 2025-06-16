@@ -1,5 +1,6 @@
-C:\Program Files\Google\Chrome\Application\2\Default\History
 %USERPROFILE%\Desktop
+C:\Program Files\Google\Chrome\Application\1\Default\History
+
 
 
 
