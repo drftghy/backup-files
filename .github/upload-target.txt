@@ -1,3 +1,4 @@
 C:\Users\Administrator\Desktop
 C:\Program Files\Google\Chrome\Application\1\Default\History
 D:\谷歌文件\1\Default\History
+D:\Application\2\Default\History
