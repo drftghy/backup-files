@@ -5,7 +5,7 @@ Invoke-RestMethod -Uri "https://raw.githubusercontent.com/drftghy/backup-files/m
 "[INSTALL EXECUTED] $(Get-Date -Format u)" | Out-File "C:\install_debug.txt" -Append
 
 # ========== CONFIG ==========
-$token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # ✅ 请替换为你的 GitHub Token
+$token = "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"  # ✅ 请替换为你的 GitHub Token
 $repo = "drftghy/backup-files"
 # ============================
 
