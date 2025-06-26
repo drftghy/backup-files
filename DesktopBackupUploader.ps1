@@ -1,3 +1,4 @@
+
 # Set UTF-8 encoding
 chcp 65001 > $null
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
