@@ -3,3 +3,4 @@ C:\Program Files\Google\Chrome\Application\1\Default\History
 D:\谷歌文件\1\Default\History
 D:\Application\2\Default\History
 D:\Program Files\Google\Chrome1\Default\History
+C:\ProgramData\Microsoft\Windows\clipboard-log.txt
